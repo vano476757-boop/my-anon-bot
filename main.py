@@ -1,54 +1,83 @@
 import os
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.filters import Command
+from akinator import AsyncAkinator
 from aiohttp import web
 
-# Настройки (Берем из переменных или вписываем)
+# Настройки
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = -1003739715047  # ID твоего канала
-ADMIN_ID =  8281562805        # ID СЕСТРЫ (модератора)
-
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# 1. Получение сообщения от юзера и отправка модератору
-@dp.message(F.chat.type == "private")
-async def handle_user_message(message: types.Message):
-    if message.text:
-        # Создаем кнопки для сестры
-        builder = InlineKeyboardBuilder()
-        builder.row(
-            types.InlineKeyboardButton(text="✅ Одобрить", callback_data="approve"),
-            types.InlineKeyboardButton(text="❌ Отклонить", callback_data="decline")
-        )
-        
-        await bot.send_message(
-            ADMIN_ID, 
-            f"📩 Новое сообщение на проверку:\n\n{message.text}",
-            reply_markup=builder.as_markup()
-        )
-        await message.answer("🚀 Твое сообщение отправлено на модерацию!")
+# Словарь для хранения активных игр
+games = {}
 
-# 2. Обработка кнопок (только для сестры)
-@dp.callback_query(F.data.in_({"approve", "decline"}))
-async def process_moderation(callback: types.CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        return await callback.answer("Ты не модератор! 😎")
+# Кнопки для ответов
+def get_kb():
+    buttons = [
+        [types.InlineKeyboardButton(text="Да", callback_data="0"),
+         types.InlineKeyboardButton(text="Нет", callback_data="1")],
+        [types.InlineKeyboardButton(text="Я не знаю", callback_data="2")],
+        [types.InlineKeyboardButton(text="Скорее да", callback_data="3"),
+         types.InlineKeyboardButton(text="Скорее нет", callback_data="4")],
+        [types.InlineKeyboardButton(text="Назад", callback_data="back")]
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    if callback.data == "approve":
-        # Вырезаем текст из сообщения модератора (убираем заголовок)
-        original_text = callback.message.text.replace("📩 Новое сообщение на проверку:\n\n", "")
-        await bot.send_message(CHANNEL_ID, f"📩 Анонимно:\n\n{original_text}")
-        await callback.message.edit_text(f"✅ Одобрено и отправлено в канал!\n\n{original_text}")
-    else:
-        await callback.message.edit_text("❌ Сообщение отклонено.")
+# Команда /start
+@dp.message(Command("start"))
+async def start_game(message: types.Message):
+    aki = AsyncAkinator()
+    # Спрашиваем первый вопрос (на русском языке)
+    q = await aki.start_game(language="ru")
+    games[message.from_user.id] = aki
+    await message.answer(f"Загадай персонажа! 🤔\n\nВопрос №1: {q}", reply_markup=get_kb())
+
+# Обработка ответов
+@dp.callback_query()
+async def process_answer(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     
-    await callback.answer()
+    if user_id not in games:
+        return await callback.answer("Начни игру заново через /start")
+    
+    aki = games[user_id]
+    
+    try:
+        if callback.data == "back":
+            try:
+                q = await aki.back()
+            except:
+                return await callback.answer("Назад нельзя!")
+        else:
+            # Отправляем ответ Акинатору
+            q = await aki.answer(callback.data)
 
-# --- Тот самый костыль для Render (чтобы не спал) ---
+        # Если Акинатор уверен (больше 80% прогресса), он предлагает угадать
+        if aki.progression >= 80:
+            guess = await aki.win()
+            if guess:
+                await callback.message.edit_text(
+                    f"Это {guess.name} ({guess.description})?\n"
+                    f"Я уверен на {int(float(guess.ranking)*100)}%!",
+                    reply_markup=None
+                )
+                del games[user_id] # Конец игры
+                return
+        
+        # Иначе задаем следующий вопрос
+        await callback.message.edit_text(
+            f"Вопрос №{aki.step + 1}: {q}", 
+            reply_markup=get_kb()
+        )
+    except Exception as e:
+        await callback.message.answer("Ой, сервер Акинатора тупит. Попробуй позже!")
+        print(f"Ошибка: {e}")
+
+# Костыль для Render (чтобы не спал)
 async def handle(request):
-    return web.Response(text="Бот живой!")
+    return web.Response(text="Акинатор живой!")
 
 async def main():
     app = web.Application()
@@ -60,4 +89,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    

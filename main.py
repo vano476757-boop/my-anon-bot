@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from akinator import AsyncAkinator
 from aiohttp import web
 
-# Настройки
+# Настройки (берем токен из переменных Render)
 TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -28,11 +28,16 @@ def get_kb():
 # Команда /start
 @dp.message(Command("start"))
 async def start_game(message: types.Message):
+    aki = AsyncAkinator()
+    # ИСПРАВЛЕНО: Сначала ставим язык, потом запускаем без параметров
     aki.language = "ru"
-q = await aki.start_game()
-
-    games[message.from_user.id] = aki
-    await message.answer(f"Загадай персонажа! 🤔\n\nВопрос №1: {q}", reply_markup=get_kb())
+    try:
+        q = await aki.start_game()
+        games[message.from_user.id] = aki
+        await message.answer(f"Загадай персонажа! 🤔\n\nВопрос №1: {q}", reply_markup=get_kb())
+    except Exception as e:
+        await message.answer("Ошибка при запуске игры. Попробуй еще раз.")
+        print(f"Ошибка старта: {e}")
 
 # Обработка ответов
 @dp.callback_query()
@@ -73,7 +78,7 @@ async def process_answer(callback: types.CallbackQuery):
         )
     except Exception as e:
         await callback.message.answer("Ой, сервер Акинатора тупит. Попробуй позже!")
-        print(f"Ошибка: {e}")
+        print(f"Ошибка в процессе: {e}")
 
 # Костыль для Render (чтобы не спал)
 async def handle(request):
@@ -85,6 +90,8 @@ async def main():
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 8080)
+    
+    # Запускаем сервер и бота
     await asyncio.gather(site.start(), dp.start_polling(bot))
 
 if __name__ == "__main__":

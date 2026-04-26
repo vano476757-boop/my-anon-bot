@@ -28,9 +28,9 @@ def get_kb():
 # Команда /start
 @dp.message(Command("start"))
 async def start_game(message: types.Message):
-    aki = AsyncAkinator()
-    # Спрашиваем первый вопрос (на русском языке)
-    q = await aki.start_game(language="ru")
+    aki.language = "ru"
+q = await aki.start_game()
+
     games[message.from_user.id] = aki
     await message.answer(f"Загадай персонажа! 🤔\n\nВопрос №1: {q}", reply_markup=get_kb())
 
